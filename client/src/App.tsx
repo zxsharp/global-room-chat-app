@@ -1,122 +1,156 @@
-import { useEffect, useState, useRef } from "react"
-import { io } from "socket.io-client"
+import { useEffect, useRef, useState } from "react";
+import { io } from "socket.io-client";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 const socket = io(import.meta.env.VITE_BACKEND_URL);
 
-function App() {
+type ChatMessage = {
+  id: string;
+  content: string | null;
+  username: string | null;
+  createdAt: Date | string | null;
+};
 
-  const [message, setMessage] = useState<string>("");
-   const [allMessages, setAllMessages] = useState<Array<{id: string; content: string; username: string; createdAt?: Date | string}>>([]);
+function App() {
   const [username, setUsername] = useState<string>("");
+  const [message, setMessage] = useState<string>("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [hasAllMessages, setHasAllMessages] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const isInitialLoadRef = useRef(true);
-  const previousMessageCountRef = useRef(0);
+  const [hasAll, setHasAll] = useState(false);
 
-  // Scroll to bottom only on initial load and new messages
-  useEffect(() => {
-    if (isInitialLoadRef.current && allMessages.length > 0) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
-      isInitialLoadRef.current = false;
-      previousMessageCountRef.current = allMessages.length;
-    } else if (allMessages.length > previousMessageCountRef.current) {
-      // Only auto-scroll when new messages arrive (count increases by small amount)
-      if (allMessages.length - previousMessageCountRef.current < 5) {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-      }
-      previousMessageCountRef.current = allMessages.length;
-    }
-  }, [allMessages]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const initialScrollDone = useRef(false);
+  const prevCount = useRef(0);
 
   useEffect(() => {
     socket.on("connect", () => {
-      console.log("connected with id:", socket.id);
-    })
+      console.log("connected", socket.id);
+    });
 
-    socket.on("user:username", (data: {username: string}) => {
-      setUsername(data.username);
-    })
+    socket.on("user:username", ({ username }) => setUsername(username));
 
-    socket.on("messages:recent", (data: {messages: Array<{id: string; content: string; username: string; createdAt: string}>}) => {
-      setAllMessages(data.messages.reverse());
-      if (data.messages.length > 0) {
-        // Cursor should be the oldest message's id as number
-        setCursor(parseInt(data.messages[data.messages.length - 1].id));
-        // Check if we have all messages
-        setHasAllMessages(data.messages.length < 20);
+    socket.on("messages:recent", ({ messages }) => {
+      const ordered = [...messages].reverse();
+      setMessages(ordered);
+      if (ordered.length) {
+        const oldest = ordered[0];
+        setCursor(oldest?.id ? parseInt(oldest.id) : null);
+        setHasAll(ordered.length < 20);
       }
-    })
+    });
 
-    socket.on("message:new", (data: {content: string; username: string; id: string}) => {
-      setAllMessages((prev) => [...prev, {id: data.id, content: data.content, username: data.username, createdAt: new Date().toISOString()}])
-    })
+    socket.on("message:new", (data: ChatMessage) => {
+      setMessages((prev) => [...prev, { ...data, createdAt: data.createdAt ?? new Date().toISOString() }]);
+    });
 
     return () => {
       socket.off("connect");
       socket.off("user:username");
       socket.off("messages:recent");
       socket.off("message:new");
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!messages.length) return;
+    if (!initialScrollDone.current) {
+      listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "auto" });
+      initialScrollDone.current = true;
+      prevCount.current = messages.length;
+      return;
     }
-  }, [])
+    if (messages.length > prevCount.current) {
+      listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+    }
+    prevCount.current = messages.length;
+  }, [messages]);
 
-  function handleMessageSend() {
-    socket.emit("message:send", {content: message, username: username}, (success: boolean) => {
-      if (success) {
-        setMessage("");
-      } else {
-        alert("unable to send message");
-      }
-    })
-  }
+  const handleSend = () => {
+    if (!message.trim()) return;
+    socket.emit("message:send", { content: message.trim(), username }, (ok: boolean) => {
+      if (ok) setMessage("");
+    });
+  };
 
-  function handleLoadMore() {
-    if (isLoading || !cursor || hasAllMessages) return;
-    
+  const handleLoadMore = () => {
+    if (isLoading || hasAll || !cursor) return;
+    const container = listRef.current;
+    const prevHeight = container?.scrollHeight ?? 0;
+    const prevTop = container?.scrollTop ?? 0;
+
     setIsLoading(true);
-    socket.emit("messages:load-more", {cursor, limit: 20}, (response: {success: boolean; messages: Array<{id: string; content: string; username: string; createdAt: string}>}) => {
-      if (response.success && response.messages.length > 0) {
-        // Prepend older messages in correct order
-        setAllMessages((prev) => [...response.messages, ...prev]);
-        // Update cursor to the oldest message ID for next query
-        setCursor(Math.min(...response.messages.map(m => parseInt(m.id))));
-        // Check if we've loaded all messages
-        if (response.messages.length < 20) {
-          setHasAllMessages(true);
-        }
+    socket.emit("messages:load-more", { cursor }, (res: { success: boolean; messages: ChatMessage[] }) => {
+      if (res.success && res.messages.length) {
+        setMessages((prev) => [...res.messages, ...prev]);
+        setCursor(Math.min(...res.messages.map((m) => parseInt(m.id))));
+        if (res.messages.length < 20) setHasAll(true);
+        requestAnimationFrame(() => {
+          if (container) container.scrollTop = prevTop + (container.scrollHeight - prevHeight);
+        });
+      } else {
+        setHasAll(true);
       }
       setIsLoading(false);
-    })
-  }
+    });
+  };
 
-  function handleScroll() {
-    if (messagesContainerRef.current) {
-      const { scrollTop } = messagesContainerRef.current;
-      // Trigger load more when at top (with small threshold)
-      if (scrollTop < 50) {
-        handleLoadMore();
-      }
-    }
-  }
+  const onScroll = () => {
+    const container = listRef.current;
+    if (container && container.scrollTop < 40) handleLoadMore();
+  };
+
+  const renderMessage = (msg: ChatMessage) => (
+    <div key={msg.id} className="px-3 py-2 rounded-lg border border-border bg-card/30">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <span className="font-semibold text-primary">{msg.username ?? "Anon"}</span>
+        <span className="text-xs">
+          {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ""}
+        </span>
+      </div>
+      <div className="mt-1 text-sm text-foreground whitespace-pre-wrap wrap-break-word">
+        {msg.content ?? ""}
+      </div>
+    </div>
+  );
 
   return (
-    <div>
-      <div ref={messagesContainerRef} onScroll={handleScroll} style={{height: "400px", overflowY: "auto", border: "1px solid #ccc", marginBottom: "10px"}}>
-        {isLoading && <div style={{padding: "8px", textAlign: "center", color: "#999"}}>Loading more messages...</div>}
-        {allMessages.map((msg, idx) => (
-          <div key={idx} style={{padding: "8px", borderBottom: "1px solid #eee"}}>
-            <div><strong>{msg.username}</strong> <span style={{color: "#666", fontSize: "12px"}}>{msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ''}</span></div>
-            <div>{msg.content}</div>
+    <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-4">
+      <Card className="w-full max-w-3xl shadow-lg">
+        <CardHeader className="border-b">
+          <CardTitle className="flex items-center justify-between text-lg">
+            <span>Global Room Chat</span>
+            <span className="text-sm text-muted-foreground">Hello <strong>{username + " !!" || "..."}</strong></span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0 flex flex-col h-[70vh]">
+          <div
+            ref={listRef}
+            onScroll={onScroll}
+            className="flex-1 overflow-y-auto"
+          >
+            <div className="flex flex-col gap-2 p-4">
+              {isLoading && <div className="text-center text-xs text-muted-foreground">Loading older messages…</div>}
+              {messages.map(renderMessage)}
+              <div ref={endRef} />
+            </div>
           </div>
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
-      <input type="text" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Enter message..." onKeyPress={(e) => e.key === 'Enter' && handleMessageSend()} />
-      <button onClick={() => handleMessageSend()}>Send</button>
+          <div className="border-t p-3 flex gap-2">
+            <Input
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Type your message…"
+              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+            />
+            <Button onClick={handleSend}>Send</Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
-  )
+  );
 }
 
-export default App
+export default App;
