@@ -20,7 +20,7 @@ async function storeMessage(content: string, username: string){
 
 async function getRecentMessages(limit = 20) {
     const messages = await prisma.message.findMany({
-        orderBy: { createdAt: "desc" },
+        orderBy: { id: "desc" },
         take: limit,
     })
 
@@ -32,7 +32,7 @@ async function getRecentMessages(limit = 20) {
     }));
 }
 
-async function getMessagesByPage(limit = 20, cursor?: { id: number }) {
+async function getMessagesByPage(cursor?: { id: number }, limit = 20) {
     const messages = await prisma.message.findMany({
         orderBy: { id: "desc" },
         take: limit,

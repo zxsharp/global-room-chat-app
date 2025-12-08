@@ -7,7 +7,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175"]
+    origin: process.env.CORS_ORIGINS?.split(",") || ["http://localhost:5173", "http://localhost:5174"]
   }
 });
 
@@ -35,8 +35,8 @@ io.on("connection", async (socket) => {
   // handle pagination request
   socket.on("messages:load-more", async (data, callback) => {
     try {
-      const { cursor, limit } = data;
-      const messages = await getMessagesByPage(limit, cursor ? { id: cursor } : undefined);
+      const { cursor} = data;
+      const messages = await getMessagesByPage(cursor ? { id: cursor } : undefined);
       callback({ success: true, messages });
     } catch (error) {
       console.error("Error loading more messages:", error);
