@@ -42,5 +42,6 @@
     "skipLibCheck": true,
   },
 
-  "exclude": ["prisma.config.ts", "prisma"]
+  "include": ["src"],
+  "exclude": ["dist", "prisma.config.ts", "prisma"]
 }
